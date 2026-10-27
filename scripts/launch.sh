@@ -52,6 +52,8 @@ CHROME_FLAGS=(
     "--no-first-run"
     "--no-default-browser-check"
     "--ozone-platform=x11"
+    "--enable-features=Vulkan"
+    "--use-vulkan"
     "--enable-unsafe-webgpu"
     "--ignore-gpu-blocklist"
     "--enable-gpu-rasterization"
