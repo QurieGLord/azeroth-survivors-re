@@ -8,8 +8,11 @@ use bevy::prelude::*;
 use super::data::{self, ClassDef};
 use super::units::{self, flat, wow_to_bevy, yaw_toward, Fx, Marks, UnitSpec};
 use super::{Phase, Run, Selection};
-use crate::creature_anim::{move_flags, MovementState};
+use crate::creature_anim::{
+    ease_strafe_yaw, move_flags, strafe_body_offset, wrap_pi, BodyTwist, MovementState,
+};
 use crate::net::{FieldChanged, Guid, ObjectStore};
+use bevy::window::{CursorGrabMode, CursorOptions, PrimaryWindow};
 
 #[derive(Component)]
 pub(super) struct Hero {
@@ -19,6 +22,10 @@ pub(super) struct Hero {
     /// ground clamp (`net::motion::ground_clamp_creatures`) re-seats every unit on the floor at
     /// the top of the frame, so the arc is re-applied over the ground each frame.
     pub(super) air: f32,
+    /// Facing yaw (radians) the hero is aiming towards.
+    pub(super) face_yaw: f32,
+    /// Rendered body heading yaw (radians), accounting for strafe body offsets.
+    pub(super) model_yaw: f32,
 }
 
 /// The body radius enemies stop at.
@@ -59,6 +66,8 @@ pub(super) struct CamRig {
     /// Elevation above the horizon (radians), clamped so the camera never dives underground.
     pub pitch: f32,
     pub mode: CamMode,
+    pub cursor_stash: Option<Vec2>,
+    pub right_down: bool,
 }
 
 impl Default for CamRig {
@@ -69,6 +78,8 @@ impl Default for CamRig {
             yaw: 0.0,
             pitch: FIXED_PITCH,
             mode: CamMode::Fixed,
+            cursor_stash: None,
+            right_down: false,
         }
     }
 }
@@ -124,7 +135,15 @@ pub(super) fn spawn_hero(
     );
     commands
         .entity(e)
-        .insert((Hero { vy: 0.0, air: 0.0 }, Marks::buffs()));
+        .insert((
+            Hero {
+                vy: 0.0,
+                air: 0.0,
+                face_yaw: 0.0,
+                model_yaw: 0.0,
+            },
+            Marks::buffs(),
+        ));
     e
 }
 
@@ -188,6 +207,7 @@ pub(super) fn aim_cursor(
 pub(super) fn drive_hero(
     time: Res<Time>,
     keys: Res<ButtonInput<KeyCode>>,
+    mouse: Res<ButtonInput<MouseButton>>,
     phase: Res<State<Phase>>,
     run: Res<Run>,
     selection: Res<Selection>,
@@ -196,67 +216,122 @@ pub(super) fn drive_hero(
     world: WorldPoint,
     auto: Option<Res<super::auto::Auto>>,
     mut player: ResMut<crate::player::Player>,
-    mut hero: Query<(&mut Transform, &mut MovementState, &mut Hero)>,
+    mut hero: Query<(&mut Transform, &mut MovementState, &mut Hero, Option<&mut BodyTwist>)>,
 ) {
     let focus = match hero.single_mut() {
-        Ok((mut tf, mut mv, mut hm)) => {
+        Ok((mut tf, mut mv, mut hm, twist)) => {
             let dt = time.delta_secs();
+            let mut move_input = Vec3::ZERO;
+            let playing = *phase.get() == Phase::Playing && run.dead_t.is_none();
+            let rmb = playing && (mouse.pressed(MouseButton::Right) || rig.right_down);
+
+            let (sy, cy) = rig.yaw.sin_cos();
+            // Camera horizontal forward and right vectors (yaw = 0 faces -Z)
+            let cam_fwd = Vec3::new(-sy, 0.0, -cy);
+            let cam_right = Vec3::new(cy, 0.0, -sy);
+
             let mut dir = Vec3::ZERO;
+            let mut anim_flags = 0u32;
+            let mut face = None;
+
             if let Some(auto) = auto
                 .as_deref()
-                .filter(|_| *phase.get() == Phase::Playing && run.dead_t.is_none())
+                .filter(|_| playing)
             {
                 dir = super::auto::steer(auto);
-            } else if *phase.get() == Phase::Playing && run.dead_t.is_none() {
+                if dir != Vec3::ZERO {
+                    face = Some(dir.normalize());
+                    anim_flags = move_flags::FORWARD;
+                }
+            } else if playing {
                 if keys.any_pressed([KeyCode::KeyW, KeyCode::ArrowUp]) {
-                    dir.z -= 1.0;
+                    move_input.z -= 1.0;
                 }
                 if keys.any_pressed([KeyCode::KeyS, KeyCode::ArrowDown]) {
-                    dir.z += 1.0;
+                    move_input.z += 1.0;
                 }
                 if keys.any_pressed([KeyCode::KeyA, KeyCode::ArrowLeft]) {
-                    dir.x -= 1.0;
+                    move_input.x -= 1.0;
                 }
                 if keys.any_pressed([KeyCode::KeyD, KeyCode::ArrowRight]) {
-                    dir.x += 1.0;
+                    move_input.x += 1.0;
                 }
-                // In orbit mode WASD is camera-relative; in fixed mode it stays world-relative.
-                if rig.mode == CamMode::Orbit {
-                    let (sy, cy) = rig.yaw.sin_cos();
-                    dir = Vec3::new(dir.x * cy + dir.z * sy, 0.0, dir.z * cy - dir.x * sy);
-                }
-            }
-            let mut pos = tf.translation;
-            // Locked, the hero faces the cursor and WASD moves him under it, so he backpedals and
-            // strafes as a player does; unlocked (or driven), he faces where he runs.
-            let face = (rig.mode == CamMode::Fixed
-                && auto.is_none()
-                && *phase.get() == Phase::Playing
-                && run.dead_t.is_none())
-            .then(|| aim.0.map(|a| flat(a - pos)))
-            .flatten()
-            .filter(|d| d.length() > 0.5)
-            .map(|d| d.normalize());
-            if let Some(look) = face {
-                let target = Quat::from_rotation_y(yaw_toward(look));
-                tf.rotation = tf.rotation.slerp(target, (dt * 20.0).min(1.0));
-            }
-            if dir != Vec3::ZERO && dt > 0.0 {
-                let dir = dir.normalize();
-                let speed = run.stats().speed * run.haste_mult();
-                pos += dir * speed * dt;
-                mv.speed = speed;
-                mv.flags = match face {
-                    Some(look) => gait(look, dir),
-                    None => {
-                        let target = Quat::from_rotation_y(yaw_toward(dir));
-                        tf.rotation = tf.rotation.slerp(target, (dt * 20.0).min(1.0));
-                        move_flags::FORWARD
+
+                if rmb || rig.mode == CamMode::Orbit {
+                    // Camera-relative movement (authentic WoW mouse-look / third-person)
+                    dir = cam_fwd * -move_input.z + cam_right * move_input.x;
+                    face = Some(cam_fwd);
+
+                    if move_input.z < 0.0 {
+                        anim_flags |= move_flags::FORWARD;
                     }
+                    if move_input.z > 0.0 {
+                        anim_flags |= move_flags::BACKWARD;
+                    }
+                    if move_input.x < 0.0 {
+                        anim_flags |= move_flags::STRAFE_LEFT;
+                    }
+                    if move_input.x > 0.0 {
+                        anim_flags |= move_flags::STRAFE_RIGHT;
+                    }
+                } else {
+                    // Top-down fixed view: world-relative movement, hero faces cursor
+                    dir = Vec3::new(move_input.x, 0.0, move_input.z);
+                    let pos = tf.translation;
+                    face = aim.0.map(|a| flat(a - pos))
+                        .filter(|d| d.length() > 0.5)
+                        .map(|d| d.normalize());
+
+                    if let Some(look) = face {
+                        if dir != Vec3::ZERO {
+                            anim_flags = gait(look, dir.normalize());
+                        }
+                    } else if dir != Vec3::ZERO {
+                        anim_flags = move_flags::FORWARD;
+                        face = Some(dir.normalize());
+                    }
+                }
+            }
+
+            let mut pos = tf.translation;
+
+            if let Some(look) = face {
+                hm.face_yaw = yaw_toward(look);
+            }
+
+            if dir != Vec3::ZERO && dt > 0.0 {
+                let dir_norm = dir.normalize();
+                // Backpedaling in WoW is slightly slower (~70% of run speed)
+                let backpedal_scale = if (anim_flags & move_flags::BACKWARD != 0)
+                    && (anim_flags & move_flags::FORWARD == 0)
+                {
+                    0.7
+                } else {
+                    1.0
                 };
-            } else if mv.speed != 0.0 || mv.flags != 0 {
-                mv.speed = 0.0;
-                mv.flags = 0;
+                let speed = run.stats().speed * run.haste_mult() * backpedal_scale;
+                pos += dir_norm * speed * dt;
+                mv.speed = speed;
+                mv.flags = anim_flags;
+
+                let strafe_offset = strafe_body_offset(anim_flags);
+                if strafe_offset != 0.0 {
+                    hm.model_yaw = ease_strafe_yaw(hm.model_yaw, hm.face_yaw, strafe_offset, dt);
+                } else {
+                    hm.model_yaw = hm.face_yaw;
+                }
+            } else {
+                if mv.speed != 0.0 || mv.flags != 0 {
+                    mv.speed = 0.0;
+                    mv.flags = 0;
+                }
+                hm.model_yaw = hm.face_yaw;
+            }
+
+            tf.rotation = Quat::from_rotation_y(hm.model_yaw);
+
+            if let Some(mut twist) = twist {
+                twist.yaw_gap = wrap_pi(hm.face_yaw - hm.model_yaw);
             }
             let map = selection.stage_def();
             let center = arena(map);
@@ -323,14 +398,30 @@ pub(super) fn drop_stray_buttons(
     mut focus: MessageReader<bevy::window::WindowFocused>,
     mut left: MessageReader<bevy::window::CursorLeft>,
     mut mouse: ResMut<ButtonInput<MouseButton>>,
+    mut windows: Query<(&mut Window, &mut CursorOptions), With<PrimaryWindow>>,
+    rig: Option<ResMut<CamRig>>,
 ) {
     let lost = focus.read().any(|f| !f.focused);
     if lost | (left.read().count() > 0) {
         mouse.release_all();
+        if let Ok((mut window, mut cursor_opts)) = windows.single_mut() {
+            if cursor_opts.grab_mode == CursorGrabMode::Locked {
+                cursor_opts.grab_mode = CursorGrabMode::None;
+                cursor_opts.visible = true;
+                if let Some(mut rig) = rig {
+                    rig.right_down = false;
+                    if let Some(pos) = rig.cursor_stash.take() {
+                        window.set_cursor_position(Some(pos));
+                    }
+                }
+            }
+        }
     }
 }
 
 /// A slow orbit at the menu; in play, top-down until `C` unlocks it to swing and tilt.
+/// When holding Right Mouse Button, the cursor is locked and hidden like in WoW, and mouse motion
+/// orbits the camera while turning the character.
 pub(super) fn place_camera(
     time: Res<Time<Real>>,
     phase: Res<State<Phase>>,
@@ -344,7 +435,27 @@ pub(super) fn place_camera(
     hero: Query<&Transform, (With<Hero>, Without<WorldCamera>)>,
     mut cams: Query<&mut Transform, With<WorldCamera>>,
     settings: Option<Res<super::SurvivorsSettings>>,
+    mut windows: Query<(&mut Window, &mut CursorOptions), With<PrimaryWindow>>,
 ) {
+    let playing = *phase.get() == Phase::Playing;
+    let rmb = playing && mouse.pressed(MouseButton::Right);
+    let lmb = playing && mouse.pressed(MouseButton::Left);
+    rig.right_down = rmb;
+
+    if let Ok((mut window, mut cursor_opts)) = windows.single_mut() {
+        if playing && mouse.just_pressed(MouseButton::Right) {
+            rig.cursor_stash = window.cursor_position();
+            cursor_opts.grab_mode = CursorGrabMode::Locked;
+            cursor_opts.visible = false;
+        } else if !rmb && cursor_opts.grab_mode == CursorGrabMode::Locked {
+            cursor_opts.grab_mode = CursorGrabMode::None;
+            cursor_opts.visible = true;
+            if let Some(pos) = rig.cursor_stash.take() {
+                window.set_cursor_position(Some(pos));
+            }
+        }
+    }
+
     // `C` unlocks the camera to swing and tilt; locking it again snaps back to the top-down view,
     // so world-relative WASD lines up with the screen again.
     if keys.just_pressed(KeyCode::KeyC) {
@@ -376,9 +487,8 @@ pub(super) fn place_camera(
             focus + Vec3::Y * 1.1,
         )
     } else {
-        // Unlocked, either mouse button drags the camera around the hero, as in WoW.
-        if rig.mode == CamMode::Orbit && mouse.any_pressed([MouseButton::Left, MouseButton::Right])
-        {
+        // Dragging with RMB (or LMB while unlocked) swings camera around hero, as in WoW.
+        if rmb || (rig.mode == CamMode::Orbit && lmb) {
             let sens = settings.as_ref().map_or(1.0, |s| s.mouse_sensitivity);
             rig.yaw -= motion.delta.x * (ORBIT_RATE * sens);
             rig.pitch = (rig.pitch + motion.delta.y * (ORBIT_RATE * sens)).clamp(PITCH_MIN, PITCH_MAX);
@@ -488,21 +598,31 @@ pub(super) fn hero_vitals(
 }
 
 /// The ground-plane distance from the hero, the measure every range in the mode uses.
-/// The movement flags for running `dir` while facing `look`: forward, backpedal or strafe, by
-/// which quarter the run falls in, so the walk, backpedal and strafe animations play.
+/// The movement flags for running `dir` while facing `look`: forward, backpedal or strafe,
+/// including diagonal combinations (forward+strafe, backward+strafe).
 fn gait(look: Vec3, dir: Vec3) -> u32 {
     let ahead = look.dot(dir);
     // Positive when `dir` is to the hero's left: WoW faces −Z with +X on the right.
     let left = look.cross(dir).y;
-    let quarter = std::f32::consts::FRAC_1_SQRT_2;
-    if ahead >= quarter {
-        move_flags::FORWARD
-    } else if ahead <= -quarter {
-        move_flags::BACKWARD
-    } else if left > 0.0 {
-        move_flags::STRAFE_LEFT
+    let mut f = 0u32;
+    if ahead > 0.38 {
+        f |= move_flags::FORWARD;
+    } else if ahead < -0.38 {
+        f |= move_flags::BACKWARD;
+    }
+    if left > 0.38 {
+        f |= move_flags::STRAFE_LEFT;
+    } else if left < -0.38 {
+        f |= move_flags::STRAFE_RIGHT;
+    }
+    if f == 0 {
+        if ahead >= 0.0 {
+            move_flags::FORWARD
+        } else {
+            move_flags::BACKWARD
+        }
     } else {
-        move_flags::STRAFE_RIGHT
+        f
     }
 }
 
