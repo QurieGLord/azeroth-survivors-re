@@ -48,13 +48,15 @@ fi
 echo "Launching game in standalone app window..."
 CHROME_FLAGS=(
     "--app=${HOST_URL}"
+    "--user-data-dir=${HOME}/.local/share/azeroth-survivors-profile"
+    "--no-first-run"
+    "--no-default-browser-check"
+    "--ozone-platform=x11"
     "--enable-unsafe-webgpu"
-    "--enable-features=Vulkan,UseSkiaRenderer,VaapiVideoDecoder"
-    "--use-vulkan"
-    "--ozone-platform-hint=auto"
     "--ignore-gpu-blocklist"
     "--enable-gpu-rasterization"
     "--enable-zero-copy"
+    "--test-type"
     "--window-size=1600,900"
 )
 
