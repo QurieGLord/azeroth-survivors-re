@@ -343,6 +343,7 @@ pub(super) fn place_camera(
     world: WorldPoint,
     hero: Query<&Transform, (With<Hero>, Without<WorldCamera>)>,
     mut cams: Query<&mut Transform, With<WorldCamera>>,
+    settings: Option<Res<super::SurvivorsSettings>>,
 ) {
     // `C` unlocks the camera to swing and tilt; locking it again snaps back to the top-down view,
     // so world-relative WASD lines up with the screen again.
@@ -378,8 +379,9 @@ pub(super) fn place_camera(
         // Unlocked, either mouse button drags the camera around the hero, as in WoW.
         if rig.mode == CamMode::Orbit && mouse.any_pressed([MouseButton::Left, MouseButton::Right])
         {
-            rig.yaw -= motion.delta.x * ORBIT_RATE;
-            rig.pitch = (rig.pitch + motion.delta.y * ORBIT_RATE).clamp(PITCH_MIN, PITCH_MAX);
+            let sens = settings.as_ref().map_or(1.0, |s| s.mouse_sensitivity);
+            rig.yaw -= motion.delta.x * (ORBIT_RATE * sens);
+            rig.pitch = (rig.pitch + motion.delta.y * (ORBIT_RATE * sens)).clamp(PITCH_MIN, PITCH_MAX);
         }
         let (sy, cy) = rig.yaw.sin_cos();
         let (sp, cp) = rig.pitch.sin_cos();

@@ -63,7 +63,7 @@ impl FullscreenMaterial for Grade {
 
 /// Whether the grade is wanted; the camera's `amount` eases toward it.
 #[derive(Resource)]
-struct GradeOn(bool);
+pub(super) struct GradeOn(pub(super) bool);
 
 pub(super) fn plugin(app: &mut App) {
     let on = crate::webenv::var("WOW_GRADE").is_none_or(|v| v != "0");

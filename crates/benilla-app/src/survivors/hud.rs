@@ -122,6 +122,7 @@ pub(super) struct UiArt {
     path: &'static str,
     coords: [f32; 4],
     tint: Color,
+    flip_x: bool,
 }
 
 impl UiArt {
@@ -130,6 +131,16 @@ impl UiArt {
             path,
             coords,
             tint: Color::WHITE,
+            flip_x: false,
+        }
+    }
+
+    pub(super) fn crop_flipped(path: &'static str, coords: [f32; 4], flip_x: bool) -> Self {
+        Self {
+            path,
+            coords,
+            tint: Color::WHITE,
+            flip_x,
         }
     }
 
@@ -138,6 +149,7 @@ impl UiArt {
             path,
             coords: [0.0, 1.0, 0.0, 1.0],
             tint,
+            flip_x: false,
         }
     }
 }
@@ -164,7 +176,18 @@ pub(super) enum UiAction {
     Resume,
     MainMenu,
     Quit,
+    SensDown,
+    SensUp,
+    ToggleGrade,
+    ToggleNiceDamage,
 }
+
+#[derive(Component)]
+pub(super) struct SensValText;
+#[derive(Component)]
+pub(super) struct GradeValText;
+#[derive(Component)]
+pub(super) struct NiceDamageValText;
 
 /// The colour a button returns to when not hovered.
 #[derive(Component)]
@@ -394,74 +417,186 @@ pub(super) fn setup_hud(
                 });
             });
             minimap::spawn_cluster(root, f, &map);
-            // The mobility button: a 36-unit action slot in `UI-Quickslot2`, its key over it.
-            root.spawn((
-                MobilitySlot,
-                Node {
-                    position_type: PositionType::Absolute,
-                    left: Val::Percent(50.0),
-                    bottom: Val::Px(24.0),
-                    margin: UiRect::left(Val::Px(-MOBILITY_SIZE / 2.0)),
-                    flex_direction: FlexDirection::Column,
-                    align_items: AlignItems::Center,
-                    row_gap: Val::Px(2.0),
-                    display: Display::None,
+
+            // --- The Modern Action Bar at bottom centre, flanked by classic dragon end caps ---
+            root.spawn(Node {
+                position_type: PositionType::Absolute,
+                left: Val::Px(0.0),
+                bottom: Val::Px(18.0),
+                width: Val::Percent(100.0),
+                justify_content: JustifyContent::Center,
+                align_items: AlignItems::FlexEnd,
+                ..default()
+            })
+            .with_children(|bar_container| {
+                bar_container.spawn(Node {
+                    flex_direction: FlexDirection::Row,
+                    align_items: AlignItems::FlexEnd,
+                    justify_content: JustifyContent::Center,
                     ..default()
-                },
-            ))
-            .with_children(|col| {
-                col.spawn(centered(f, "F", 18.0, Color::WHITE));
-                col.spawn((
-                    Node {
-                        width: Val::Px(MOBILITY_SIZE),
-                        height: Val::Px(MOBILITY_SIZE),
-                        ..default()
-                    },
-                    Interaction::default(),
-                    TipFor::Mobility,
-                ))
-                .with_children(|slot| {
-                    // `UI-Quickslot2` is the empty slot's 64×64 frame, the button 36 inside it.
-                    slot.spawn((
+                })
+                .with_children(|row| {
+                    // Left Dragon End Cap (perched facing inward)
+                    row.spawn((
                         Node {
-                            position_type: PositionType::Absolute,
-                            left: Val::Px(-MOBILITY_SIZE * 0.42),
-                            top: Val::Px(-MOBILITY_SIZE * 0.42),
-                            width: Val::Px(MOBILITY_SIZE * 1.84),
-                            height: Val::Px(MOBILITY_SIZE * 1.84),
+                            width: Val::Px(82.0),
+                            height: Val::Px(82.0),
+                            margin: UiRect {
+                                right: Val::Px(-12.0),
+                                bottom: Val::Px(-4.0),
+                                ..default()
+                            },
                             ..default()
                         },
                         ImageNode {
                             color: Color::NONE,
                             ..default()
                         },
-                        UiArt::crop("Interface\\Buttons\\UI-Quickslot2", [0.0, 1.0, 0.0, 1.0]),
+                        UiArt::crop(
+                            "Interface\\MainMenuBar\\UI-MainMenuBar-EndCap-Dwarf",
+                            [0.0, 1.0, 0.0, 1.0],
+                        ),
                     ));
-                    slot.spawn((
-                        MobilityIcon,
+
+                    // Center Soft Modern Panel
+                    row.spawn((
                         Node {
-                            width: Val::Percent(100.0),
-                            height: Val::Percent(100.0),
+                            flex_direction: FlexDirection::Column,
+                            align_items: AlignItems::Center,
+                            row_gap: Val::Px(4.0),
+                            padding: UiRect::axes(Val::Px(12.0), Val::Px(6.0)),
+                            border: UiRect::all(Val::Px(1.5)),
+                            border_radius: BorderRadius::all(Val::Px(8.0)),
+                            ..default()
+                        },
+                        BackgroundColor(Color::srgba(0.06, 0.07, 0.09, 0.82)),
+                        BorderColor::all(Color::srgba(0.55, 0.44, 0.22, 0.65)),
+                    ))
+                    .with_children(|panel| {
+                        // Passives mini-row (small icons)
+                        panel.spawn((
+                            PassiveRow,
+                            Node {
+                                flex_direction: FlexDirection::Row,
+                                column_gap: Val::Px(4.0),
+                                align_items: AlignItems::Center,
+                                justify_content: JustifyContent::Center,
+                                min_height: Val::Px(0.0),
+                                ..default()
+                            },
+                        ));
+
+                        // Active Abilities row + Mobility slot
+                        panel.spawn(Node {
+                            flex_direction: FlexDirection::Row,
+                            column_gap: Val::Px(6.0),
+                            align_items: AlignItems::Center,
+                            justify_content: JustifyContent::Center,
+                            ..default()
+                        })
+                        .with_children(|actions| {
+                            actions.spawn((
+                                AbilityRow,
+                                Node {
+                                    flex_direction: FlexDirection::Row,
+                                    column_gap: Val::Px(5.0),
+                                    align_items: AlignItems::Center,
+                                    ..default()
+                                },
+                            ));
+
+                            // The mobility button: a 36-unit action slot in `UI-Quickslot2`, its key over it.
+                            actions.spawn((
+                                MobilitySlot,
+                                Node {
+                                    flex_direction: FlexDirection::Column,
+                                    align_items: AlignItems::Center,
+                                    row_gap: Val::Px(2.0),
+                                    display: Display::None,
+                                    ..default()
+                                },
+                            ))
+                            .with_children(|col| {
+                                col.spawn(centered(f, "F", 14.0, Color::srgb(1.0, 0.85, 0.3)));
+                                col.spawn((
+                                    Node {
+                                        width: Val::Px(MOBILITY_SIZE),
+                                        height: Val::Px(MOBILITY_SIZE),
+                                        ..default()
+                                    },
+                                    Interaction::default(),
+                                    TipFor::Mobility,
+                                ))
+                                .with_children(|slot| {
+                                    // `UI-Quickslot2` is the empty slot's 64×64 frame, the button 36 inside it.
+                                    slot.spawn((
+                                        Node {
+                                            position_type: PositionType::Absolute,
+                                            left: Val::Px(-MOBILITY_SIZE * 0.42),
+                                            top: Val::Px(-MOBILITY_SIZE * 0.42),
+                                            width: Val::Px(MOBILITY_SIZE * 1.84),
+                                            height: Val::Px(MOBILITY_SIZE * 1.84),
+                                            ..default()
+                                        },
+                                        ImageNode {
+                                            color: Color::NONE,
+                                            ..default()
+                                        },
+                                        UiArt::crop("Interface\\Buttons\\UI-Quickslot2", [0.0, 1.0, 0.0, 1.0]),
+                                    ));
+                                    slot.spawn((
+                                        MobilityIcon,
+                                        Node {
+                                            width: Val::Percent(100.0),
+                                            height: Val::Percent(100.0),
+                                            ..default()
+                                        },
+                                        ImageNode {
+                                            color: Color::srgba(0.0, 0.0, 0.0, 0.6),
+                                            ..default()
+                                        },
+                                    ));
+                                    let handle = sweeps_init.add(SweepUiMaterial { sweep: 0.0 });
+                                    slot.spawn((
+                                        Node {
+                                            position_type: PositionType::Absolute,
+                                            width: Val::Percent(100.0),
+                                            height: Val::Percent(100.0),
+                                            ..default()
+                                        },
+                                        MaterialNode(handle.clone()),
+                                        MobilitySweep(handle),
+                                    ));
+                                });
+                            });
+                        });
+                    });
+
+                    // Right Dragon End Cap (horizontally flipped)
+                    row.spawn((
+                        Node {
+                            width: Val::Px(82.0),
+                            height: Val::Px(82.0),
+                            margin: UiRect {
+                                left: Val::Px(-12.0),
+                                bottom: Val::Px(-4.0),
+                                ..default()
+                            },
                             ..default()
                         },
                         ImageNode {
-                            color: Color::srgba(0.0, 0.0, 0.0, 0.6),
+                            color: Color::NONE,
                             ..default()
                         },
-                    ));
-                    let handle = sweeps_init.add(SweepUiMaterial { sweep: 0.0 });
-                    slot.spawn((
-                        Node {
-                            position_type: PositionType::Absolute,
-                            width: Val::Percent(100.0),
-                            height: Val::Percent(100.0),
-                            ..default()
-                        },
-                        MaterialNode(handle.clone()),
-                        MobilitySweep(handle),
+                        UiArt::crop_flipped(
+                            "Interface\\MainMenuBar\\UI-MainMenuBar-EndCap-Dwarf",
+                            [0.0, 1.0, 0.0, 1.0],
+                            true,
+                        ),
                     ));
                 });
             });
+
             root.spawn(Node {
                 width: Val::Percent(100.0),
                 padding: UiRect::all(Val::Px(10.0)),
@@ -471,26 +606,8 @@ pub(super) fn setup_hud(
             })
             .with_children(|row| {
                 row.spawn(Node {
-                    flex_direction: FlexDirection::Column,
-                    row_gap: Val::Px(6.0),
                     width: Val::Px(300.0),
                     ..default()
-                })
-                .with_children(|col| {
-                    col.spawn((
-                        AbilityRow,
-                        Node {
-                            column_gap: Val::Px(4.0),
-                            ..default()
-                        },
-                    ));
-                    col.spawn((
-                        PassiveRow,
-                        Node {
-                            column_gap: Val::Px(4.0),
-                            ..default()
-                        },
-                    ));
                 });
                 // The clock, with the level and the kill count on one line under it.
                 row.spawn(Node {
@@ -732,6 +849,137 @@ pub(super) fn setup_hud(
         ))
         .with_children(|root| {
             root.spawn(centered(f, "Paused", 46.0, GOLD));
+
+            // Settings Box
+            root.spawn((
+                Node {
+                    flex_direction: FlexDirection::Column,
+                    align_items: AlignItems::Center,
+                    row_gap: Val::Px(8.0),
+                    padding: UiRect::all(Val::Px(12.0)),
+                    margin: UiRect::axes(Val::Px(0.0), Val::Px(4.0)),
+                    border: UiRect::all(Val::Px(1.5)),
+                    border_radius: BorderRadius::all(Val::Px(6.0)),
+                    width: Val::Px(320.0),
+                    ..default()
+                },
+                BackgroundColor(Color::srgba(0.08, 0.09, 0.12, 0.88)),
+                BorderColor::all(Color::srgba(0.55, 0.44, 0.22, 0.6)),
+            ))
+            .with_children(|box_node| {
+                box_node.spawn(text(f, "Settings", 16.0, GOLD));
+
+                // Mouse look sensitivity row
+                box_node.spawn(Node {
+                    flex_direction: FlexDirection::Row,
+                    justify_content: JustifyContent::SpaceBetween,
+                    align_items: AlignItems::Center,
+                    width: Val::Percent(100.0),
+                    ..default()
+                })
+                .with_children(|row| {
+                    row.spawn(text(f, "Mouse Look Speed", 13.0, Color::WHITE));
+                    row.spawn(Node {
+                        flex_direction: FlexDirection::Row,
+                        column_gap: Val::Px(6.0),
+                        align_items: AlignItems::Center,
+                        ..default()
+                    })
+                    .with_children(|ctrl| {
+                        ctrl.spawn((
+                            button(UiAction::SensDown, BUTTON),
+                            Node {
+                                width: Val::Px(24.0),
+                                height: Val::Px(22.0),
+                                justify_content: JustifyContent::Center,
+                                align_items: AlignItems::Center,
+                                border: UiRect::all(Val::Px(1.0)),
+                                border_radius: BorderRadius::all(Val::Px(3.0)),
+                                ..default()
+                            },
+                        ))
+                        .with_children(|b| {
+                            b.spawn(text(f, "-", 14.0, Color::WHITE));
+                        });
+
+                        ctrl.spawn((
+                            SensValText,
+                            text(f, "1.0x", 13.0, GOLD),
+                        ));
+
+                        ctrl.spawn((
+                            button(UiAction::SensUp, BUTTON),
+                            Node {
+                                width: Val::Px(24.0),
+                                height: Val::Px(22.0),
+                                justify_content: JustifyContent::Center,
+                                align_items: AlignItems::Center,
+                                border: UiRect::all(Val::Px(1.0)),
+                                border_radius: BorderRadius::all(Val::Px(3.0)),
+                                ..default()
+                            },
+                        ))
+                        .with_children(|b| {
+                            b.spawn(text(f, "+", 14.0, Color::WHITE));
+                        });
+                    });
+                });
+
+                // Graphics / Polish row
+                box_node.spawn(Node {
+                    flex_direction: FlexDirection::Row,
+                    justify_content: JustifyContent::SpaceBetween,
+                    align_items: AlignItems::Center,
+                    width: Val::Percent(100.0),
+                    ..default()
+                })
+                .with_children(|row| {
+                    row.spawn(text(f, "Visual Polish (G)", 13.0, Color::WHITE));
+                    row.spawn((
+                        button(UiAction::ToggleGrade, BUTTON),
+                        Node {
+                            padding: UiRect::axes(Val::Px(10.0), Val::Px(3.0)),
+                            justify_content: JustifyContent::Center,
+                            align_items: AlignItems::Center,
+                            border: UiRect::all(Val::Px(1.0)),
+                            border_radius: BorderRadius::all(Val::Px(3.0)),
+                            min_width: Val::Px(60.0),
+                            ..default()
+                        },
+                    ))
+                    .with_children(|b| {
+                        b.spawn((GradeValText, text(f, "ON", 12.0, GOLD)));
+                    });
+                });
+
+                // NiceDamage row
+                box_node.spawn(Node {
+                    flex_direction: FlexDirection::Row,
+                    justify_content: JustifyContent::SpaceBetween,
+                    align_items: AlignItems::Center,
+                    width: Val::Percent(100.0),
+                    ..default()
+                })
+                .with_children(|row| {
+                    row.spawn(text(f, "Damage Numbers", 13.0, Color::WHITE));
+                    row.spawn((
+                        button(UiAction::ToggleNiceDamage, BUTTON),
+                        Node {
+                            padding: UiRect::axes(Val::Px(10.0), Val::Px(3.0)),
+                            justify_content: JustifyContent::Center,
+                            align_items: AlignItems::Center,
+                            border: UiRect::all(Val::Px(1.0)),
+                            border_radius: BorderRadius::all(Val::Px(3.0)),
+                            min_width: Val::Px(75.0),
+                            ..default()
+                        },
+                    ))
+                    .with_children(|b| {
+                        b.spawn((NiceDamageValText, text(f, "NiceDamage", 12.0, GOLD)));
+                    });
+                });
+            });
+
             for (label, action) in [
                 ("Resume", UiAction::Resume),
                 ("Abandon run", UiAction::MainMenu),
@@ -1027,6 +1275,8 @@ pub(super) fn buttons(
     mut next: ResMut<NextState<Phase>>,
     mut exit: MessageWriter<AppExit>,
     phase: Res<State<Phase>>,
+    mut settings: Option<ResMut<super::SurvivorsSettings>>,
+    mut grade_on: Option<ResMut<super::grade::GradeOn>>,
 ) {
     for (interaction, action, base, mut bg) in &mut presses {
         match interaction {
@@ -1040,8 +1290,61 @@ pub(super) fn buttons(
                     (UiAction::Quit, Phase::Paused | Phase::GameOver) => {
                         exit.write(AppExit::Success);
                     }
+                    (UiAction::SensDown, Phase::Paused) => {
+                        if let Some(ref mut s) = settings {
+                            s.mouse_sensitivity = ((s.mouse_sensitivity - 0.1) * 10.0).round() / 10.0;
+                            s.mouse_sensitivity = s.mouse_sensitivity.max(0.2);
+                        }
+                    }
+                    (UiAction::SensUp, Phase::Paused) => {
+                        if let Some(ref mut s) = settings {
+                            s.mouse_sensitivity = ((s.mouse_sensitivity + 0.1) * 10.0).round() / 10.0;
+                            s.mouse_sensitivity = s.mouse_sensitivity.min(3.0);
+                        }
+                    }
+                    (UiAction::ToggleGrade, Phase::Paused) => {
+                        if let Some(ref mut g) = grade_on {
+                            g.0 = !g.0;
+                        }
+                    }
+                    (UiAction::ToggleNiceDamage, Phase::Paused) => {
+                        if let Some(ref mut s) = settings {
+                            s.nice_damage = !s.nice_damage;
+                        }
+                    }
                     _ => {}
                 }
+            }
+        }
+    }
+}
+
+pub(super) fn update_settings_ui(
+    settings: Option<Res<super::SurvivorsSettings>>,
+    grade_on: Option<Res<super::grade::GradeOn>>,
+    mut sens_q: Query<&mut Text, (With<SensValText>, Without<GradeValText>, Without<NiceDamageValText>)>,
+    mut grade_q: Query<&mut Text, (With<GradeValText>, Without<SensValText>, Without<NiceDamageValText>)>,
+    mut dmg_q: Query<&mut Text, (With<NiceDamageValText>, Without<SensValText>, Without<GradeValText>)>,
+) {
+    if let Some(s) = settings {
+        for mut t in &mut sens_q {
+            let label = format!("{:.1}x", s.mouse_sensitivity);
+            if **t != label {
+                **t = label;
+            }
+        }
+        for mut t in &mut dmg_q {
+            let label = if s.nice_damage { "NiceDamage" } else { "Classic" };
+            if **t != label {
+                **t = label.to_string();
+            }
+        }
+    }
+    if let Some(g) = grade_on {
+        for mut t in &mut grade_q {
+            let label = if g.0 { "ON" } else { "OFF" };
+            if **t != label {
+                **t = label.to_string();
             }
         }
     }
@@ -1483,6 +1786,7 @@ pub(super) fn fill_art(
         }
         img.image = h;
         img.color = art.tint;
+        img.flip_x = art.flip_x;
     }
 }
 
@@ -2108,13 +2412,23 @@ pub(super) fn icon_tooltip(
     };
     // Physical pixels to the 768-unit canvas the `Val`s are on.
     let inv = computed.inverse_scale_factor;
-    let (left, top) = (
-        Val::Px((at.translation.x - computed.size().x / 2.0) * inv),
-        Val::Px((at.translation.y + computed.size().y / 2.0) * inv + 4.0),
-    );
-    if node.left != left || node.top != top {
-        node.left = left;
-        node.top = top;
+    let slot_top = (at.translation.y - computed.size().y / 2.0) * inv;
+    let slot_bottom = (at.translation.y + computed.size().y / 2.0) * inv;
+    let left = Val::Px((at.translation.x - computed.size().x / 2.0) * inv);
+    if slot_bottom > 400.0 {
+        let bottom = Val::Px(768.0 - slot_top + 6.0);
+        if node.left != left || node.bottom != bottom || node.top != Val::Auto {
+            node.left = left;
+            node.top = Val::Auto;
+            node.bottom = bottom;
+        }
+    } else {
+        let top = Val::Px(slot_bottom + 4.0);
+        if node.left != left || node.top != top || node.bottom != Val::Auto {
+            node.left = left;
+            node.top = top;
+            node.bottom = Val::Auto;
+        }
     }
     if *shown == Some((tip, run.version)) {
         if *vis != Visibility::Inherited {

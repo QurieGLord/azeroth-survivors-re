@@ -43,6 +43,12 @@ minutes. **No server, no login, no account** — fully offline and self-containe
   `Damage 20 » 26` or `Targets 2 » 3`.
 - **A class movement spell on F** from level 5, aimed at the cursor: Blink, Charge, Sprint, Dash,
   Fade, Ghost Wolf, Aspect of the Cheetah, Blessing of Freedom, Howl of Terror.
+- **A modern action bar with classic gryphon/dragon end caps:** active abilities and mobility spell are cleanly centered at the bottom of the screen, framed by the iconic Warcraft dragon artwork with soft translucent styling and rounded bronze borders. Passives sit in a neat secondary row, keeping the top left of the screen clean.
+- **In-game settings in the pause menu (Esc):**
+  - **Mouse look sensitivity:** adjust camera orbit speed from 0.2x to 3.0x with on-screen buttons.
+  - **Visual polish toggle:** toggle the CAS sharpen and colour grading pass on the fly.
+  - **NiceDamage numbers:** toggle between standard combat numbers and the punchy NiceDamage font (`SKURRI.TTF`).
+- **Desktop launcher & borderless app window:** a system menu shortcut (`.desktop`) and `scripts/launch.sh` that launches the game in a dedicated borderless window with full Vulkan WebGPU acceleration on Linux (60+ FPS on Wayland/NVIDIA).
 - **A camera you can free:** locked top-down by default with the hero facing the cursor. **C**
   unlocks it to swing and tilt, and the wheel zooms from over the shoulder out to 70 yards.
 - A light sharpen-and-colour pass over the picture (**G** toggles it).
@@ -54,6 +60,8 @@ git clone https://github.com/OutThisLife/azeroth-survivors-re
 cd azeroth-survivors-re
 make build     # fetch game data + install toolchain + build the wasm (~5.5 GB download)
 make start     # → open http://127.0.0.1:8090/
+# or launch directly in standalone window:
+./scripts/launch.sh
 ```
 
 `make build` chains three re-runnable scripts, each skipping what's already done:

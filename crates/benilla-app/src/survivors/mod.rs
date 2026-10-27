@@ -33,6 +33,44 @@ pub(crate) fn active() -> bool {
         || crate::webenv::var("WOW_SURVIVORS").is_some()
 }
 
+/// Player settings for Survivors mode (mouse sensitivity, NiceDamage combat text).
+#[derive(Resource)]
+pub(crate) struct SurvivorsSettings {
+    pub mouse_sensitivity: f32,
+    pub nice_damage: bool,
+}
+
+impl Default for SurvivorsSettings {
+    fn default() -> Self {
+        Self {
+            mouse_sensitivity: 1.0,
+            nice_damage: true,
+        }
+    }
+}
+
+fn init_damage_font(
+    settings: Res<SurvivorsSettings>,
+    mut font: ResMut<crate::combat_text::DamageTextFont>,
+) {
+    if settings.nice_damage {
+        font.0 = Some("Fonts\\SKURRI.TTF".to_string());
+    }
+}
+
+fn apply_damage_font(
+    settings: Res<SurvivorsSettings>,
+    mut font: ResMut<crate::combat_text::DamageTextFont>,
+) {
+    if settings.is_changed() {
+        font.0 = if settings.nice_damage {
+            Some("Fonts\\SKURRI.TTF".to_string())
+        } else {
+            None
+        };
+    }
+}
+
 pub(crate) struct SurvivorsPlugin;
 
 impl Plugin for SurvivorsPlugin {
@@ -44,6 +82,7 @@ impl Plugin for SurvivorsPlugin {
             .init_resource::<Rng>()
             .init_resource::<Selection>()
             .init_resource::<Run>()
+            .init_resource::<SurvivorsSettings>()
             .init_resource::<hero::CamRig>()
             .init_resource::<hero::AimPoint>()
             .init_resource::<abilities::PendingHits>()
@@ -54,8 +93,8 @@ impl Plugin for SurvivorsPlugin {
             .add_message::<enemies::Loot>()
             .add_plugins(bevy::ui_render::UiMaterialPlugin::<hud::SweepUiMaterial>::default())
             .add_plugins(bevy::ui_render::UiMaterialPlugin::<fill::FillMaterial>::default())
-            .add_systems(Startup, hud::setup_hud)
-            .add_systems(Update, hero::daylight)
+            .add_systems(Startup, (hud::setup_hud, init_damage_font))
+            .add_systems(Update, (hero::daylight, apply_damage_font))
             .add_systems(
                 Update,
                 (
@@ -111,6 +150,7 @@ impl Plugin for SurvivorsPlugin {
                     hud::fill_icons,
                     hud::update_cooldown_sweeps,
                     hud::refresh_mobility,
+                    hud::update_settings_ui,
                     hud::show_panels,
                 )
                     .chain()

@@ -25,6 +25,9 @@ start: ## Serve the game at http://127.0.0.1:8090 (run `make build` first)
 	@test -f $(WASM) || { echo "  not built yet — run: make build"; exit 1; }
 	cargo run --release -p wenilla-host -- --www web/dist --data $(DATA)
 
+launch: ## Launch the game in borderless window via scripts/launch.sh
+	./scripts/launch.sh
+
 native: fetch-data ## Build + run the native desktop version
 	WOW_DATA=$(DATA) cargo run --release -p warcraft-survivors
 
